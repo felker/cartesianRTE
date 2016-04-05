@@ -1,0 +1,6 @@
+debug_vanLeer/
+angular_convergence/
+*.DS_Store
+*~
+*.o
+*.vtk
