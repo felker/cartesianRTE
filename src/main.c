@@ -32,11 +32,13 @@
 #define X1_PERIODIC 0
 #define X2_PERIODIC 0
 #define AUTO_TIMESTEP 1 //flag for automatically setting dt such that max{cfl_array} = CFL
-#define CFL 0.59 //if set to 1.0, 1D constant advection along grid is exact. 
-#define OUTPUT_INTERVAL 0 //choose timestep interval to dump simulation data to rte-n.vtk. 0 for only last step, 1 for every step
-#define SECOND_ORDER //flag to turn on van Leer flux limiting
+#define CFL 0.8 //if set to 1.0, 1D constant advection along grid is exact. 
+#define OUTPUT_INTERVAL 1 //choose timestep interval to dump simulation data to rte-n.vtk. 0 for only last step, 1 for every step
+#undef SECOND_ORDER //flag to turn on van Leer flux limiting
 #define ANALYTIC_SOLUTION //in addition to timestepping, output steady state solution in analytic-rte.vtk
 
+
+#define V_EXACT //ifdef, then exact integral over boundary velocity is computed. Else, midpoint approximation is used
 #undef DEBUG //define to probe a cell's relevant values at indices assigned below
 #define TEST5
 #undef SOLID_ANGLE //only works with first order. recompute the edge waves based on integral average of positive solid angle 
@@ -80,7 +82,7 @@ int main(int argc, char **argv){
   int index=0; 
   int indexJ=0;   /* for computing zeroth angular moment of the radiation field*/
   int next, next2, prev, prev2; //for indexing third/angular dimension since ghost cells are not used in that dimension
-  int nsteps = 800;
+  int nsteps = 50;
   double dt = 0.02; //initial timestep. Auto adjusted #ifdef AUTO_TIMESTEP
 
   /*----------------------------------------*/
@@ -97,7 +99,7 @@ int main(int argc, char **argv){
   int nxa1;
   double *dxa1;  //angular width of cell 
   if (xa1_uniform){
-    nxa1 = 96; 
+    nxa1 = 4; 
   } 
   else {
     N_bruls = 4;
@@ -109,14 +111,14 @@ int main(int argc, char **argv){
 
   //TEST5 parameters: these are the active angular bins (inclusive) that point source emits radiation
   int source_k_start = 0;
-  int source_k_end = 95;
+  int source_k_end = 3;
 
   /* DEBUG parameters: set these to select a cell and timestep at which to print out fluxes and limited slopes, etc */
 #ifdef DEBUG
-  int n_debug = 13;
-  int k_debug = 1;
+  int n_debug = 1;
+  int k_debug = 0;
   int j_debug = 66;
-  int i_debug = 75;
+  int i_debug = 67;
 #endif 
 
   int num_ghost = 2; //number of ghost cells on both boundaries of each dimension
@@ -264,7 +266,7 @@ int main(int argc, char **argv){
 
   for(k=ks; k<=ke; k++){  
     if (k==ke) //need this to compute exact average edge velocity integral
-      next = ks;
+      next = ks+1;
     else
       next = k+1;
     for(j=js-1; j<=je; j++){       
@@ -279,13 +281,24 @@ int main(int argc, char **argv){
 	  V[k][j][i] = mu[k][1]; //mu[next][0]*sin(dx2/2) + mu[next][1]*cos(dx2/2); //sin(xa1[next] +dx2/2); //
 	}	  
 	/* Compute exact average edge velocities */
-	//POSSIBLE ERROR: IS DXA1[KE] PROPERLY DEFINED?
-	//U[k][j][i] = (sin(xa1_b[next]) - sin(xa1_b[k]))/dxa1[k];
-	//V[k][j][i] = (-cos(xa1_b[next]) + cos(xa1_b[k]))/dxa1[k];	
+	// ke is a ghost cell necessary for proper Visit output
+	//dxa1[ke] not defined
+	//xa1_b[ks] = xa1_b[ke], and we want the velocity to match the first real cell 
+#ifdef V_EXACT
+	U[k][j][i] = (sin(xa1_b[next]) - sin(xa1_b[k]))/dxa1[ks];
+	V[k][j][i] = (-cos(xa1_b[next]) + cos(xa1_b[k]))/dxa1[ks];	   
+#endif
 	source[k][j][i] = 0.0;
       }
     }
   }
+  //  printf("xa1_b[ks] = %lf xa1_b[ke] = %lf dxa1[ke] = %lf \n",xa1_b[ks],xa1_b[ke],dxa1[ke]); 
+  /* Print out all velocities */
+  /*  for(k=ks; k<=ke; k++){  
+    for(j=js-1; j<=je; j++){       
+      for(i=is-1; i<=ie; i++){
+	printf("(U,V)[%d,%d,%d] = (%lf, %lf) \n",k,j,i,U[k][j][i],V[k][j][i]); 
+	}}}  */
 
   /* Use numerical integration to compute solid angle projections for #ifdef SOLID_ANGLE case */
   gsl_integration_workspace * w = gsl_integration_workspace_alloc (1000); //max number of subintervals per integral
@@ -449,18 +462,18 @@ int main(int argc, char **argv){
   for (k=0; k<ke; k++){
     for (j=js; j<je; j++){
       for (i=is; i<ie; i++){
-	I[k][j][i] =0.0; 
+	I[k][j][i] = 0.0; 
       }
     }
   }
 
   //source in bottom left corner
-  source_x = x1_b[source_i];
-  source_y = x2_b[source_j];
+  /*  source_x = x1_b[source_i];
+      source_y = x2_b[source_j]; */
 
-  //centered source-- this breaks the diagonal beam case. Use in isotropic case
-  //  source_x = x1[source_i];
-  //  source_y = x2[source_j];
+  //centered source-- this breaks the diagonal beam case, since some rays correspond to angles 3pi/2<xi<2pi. Use in isotropic case
+  source_x = x1[source_i];
+  source_y = x2[source_j];
 
   int subsamples = 10; //= number of points inside a cell in 1D
   double dx_s = dx1/(subsamples); 
@@ -473,54 +486,49 @@ int main(int argc, char **argv){
     for (i=is; i<ie; i++){ 
       if (i==source_i && j==source_j)
 	for (k=source_k_start; k<=source_k_end; k++){
-	  I[k][j][i] =1.0;
+	  I[k][j][i] = 1.0;
 	}      
       else{
-	if (i >= source_i && j >= source_j){ //only in diagonal beam test case
+	//	if (i >= source_i && j >= source_j){ //ONLY USE IN DIAGONAL BEAM TEST: restricts to first quadrant. Comment out lower brace
 	  //Simplified approximation to analytic solution: subsample each cell spatially 
 	  for (l=0; l<subsamples; l++){
 	    for (n=0; n<subsamples; n++){ //is this the correct way to calculate subsample cell centers?
 	      rec_x = (x1_b[i] + dx_s/2) // first subsample x position
 		+ l*dx_s; 
-	      rec_y = (x2_b[j] + dy_s/2) // first subsample x position
+	      rec_y = (x2_b[j] + dy_s/2) // first subsample y position
 		+ n*dy_s; 
 	      dist = sqrt((rec_x - source_x)*(rec_x - source_x) + (rec_y - source_y)*(rec_y - source_y));
-	      rec_angle = atan2(rec_y-source_y,rec_x-source_x);
-	      // if angle is less than 0 radians, add 2pi radians
-	      rec_angle = (rec_angle > 0 ? rec_angle : (2*M_PI + rec_angle)) ;
+	      rec_angle = atan2(rec_y-source_y,rec_x-source_x);       //4 quadrant arctangent returns values -pi, pi
+	      rec_angle = (rec_angle > 0 ? rec_angle : (2*M_PI + rec_angle)) ;       // if angle is less than 0 radians, add 2pi radians
 	      //		printf("distance = %lf angle = %lf\n",dist,rec_angle);
 	      debug_index = 0; 
 	      //place intensity in corresponding solid angle 
 	      for (k=source_k_start; k<=source_k_end; k++){
 		//		  printf("xa1_b[%d] = %lf, xa1_b[%d] = %lf\n",k,xa1_b[k],k+1,xa1_b[k+1]); 
 		if (rec_angle >= xa1_b[k] && rec_angle <= xa1_b[k+1]){ // if the angle of the sample point is equal to a boundary, split the intensity in half.
-		  //ensure that every subsample is being placed in an angular bin
 		  debug_index = 1; 
-		  I[k][j][i] += (dx1)*(1.0/dist);
-		    // debug first row in quadrant-- angle should be near zero radians
-		    /*		    if (i==source_i+1 && j==source_j){
+		  I[k][j][i] += (dx1/2)*(1.0/dist);
+		  // debug first row in first quadrant-- angle should be near zero radians
+		  /*		    if (i==source_i+1 && j==source_j){
 				    printf("cell (%d,%d) subsample (%d, %d) found angular bin k=%d \n",i,j,l,n,k); 
 				    printf("x,y = (%lf, %lf) distance = %lf angle = %lf\n",rec_x,rec_y,dist,rec_angle);
 				    }*/
 		}
 	      }
-	      if (debug_index == 0){
+	      if (debug_index == 0){ //ensure that every subsample is being placed in some solid angular bin
 		printf("angular bin not found!\n"); 
 		return(1); 
 	      }
-	      
-	      //		    I[k][j][i] += (dx1/2)*(1.0/dist);		
-	      }
-	    }
-	    //kyle: current issue is that the 1/r falling off of I is more significant when the solid angle bin is small and I is treated as an average value in the bin. 
-	    //im not sure that our phase volume average falls off as 1/r for a uniform discretized cell...
-	    for (k=0; k<ke; k++){//renormalize the phase space cell
-	      I[k][j][i] /= (subsamples*subsamples)*dxa1[k]; 
 	    }
 	  }
-	}
+	  //im not sure that our phase volume average falls off as 1/r for a uniform discretized cell... actually I think it does. 
+	  for (k=0; k<ke; k++){//renormalize the phase space cell
+	    I[k][j][i] /= (subsamples*subsamples)*dxa1[k]; //need to weight by dxa1 otherwise falloff is too fast
+	  }
+	  //} //ONLY USE IN DIAGONAL TEST CASE: comment out for isotropic test case
       }
     }
+  }
   for (k=ks; k<ke; k++){
     for (j=js; j<je; j++){
       for (i=is; i<ie; i++){
@@ -576,7 +584,7 @@ int main(int argc, char **argv){
   }
 
   sprintf(filename,"analytic-rte.vtk"); 
-  
+
   //kyle: new analytic solution: temporarily change pointers before doing actual computation:
   vars[0] = realI_analytic;
   vars[1] = realJ_analytic;
@@ -964,6 +972,9 @@ int main(int argc, char **argv){
 	    printf("-------------------\n"); 
 	    flux_limiter_x1_l = flux_PLM_athena_debug(pr, 2, dt, dx1, fabs(U[k][j][i]), imu);
 	    printf("limited x fluxes: i-1/2 = %.5e i+1/2 = %.5e \n",flux_limiter_x1_l,flux_limiter_x1_r);  
+	    printf("dxa1[k]*dx2*flux_limiter_x1_r*U[k][j][i+1] = %.9e \n",dxa1[k]*dx2*flux_limiter_x1_r*U[k][j][i+1]);
+	    printf("dxa1[k]*dx2*flux_limiter_x1_l*U[k][j][i] = %.9e \n",dxa1[k]*dx2*flux_limiter_x1_l*U[k][j][i]);
+	    printf("dt/(vol[k][j][i]) = %.9e \n",dt/(vol[k][j][i])); 
 	  }
 #endif //DEBUG
 	  
@@ -1114,6 +1125,13 @@ int main(int argc, char **argv){
       indexJ =0; 
       for (j=js; j<je; j++){
 	for (i=is; i<ie; i++){
+#ifdef DEBUG
+	  /* Debug: probe the intensity of a cell */
+	  if (n==n_debug && k==k_debug & j == j_debug && i == i_debug){
+	    printf("(%d,%d,%d) (U,V) = (%lf, %lf) \n",k,j,i,U[k][j][i],V[k][j][i]);
+	    printf("Current I = %.9e Previous I = %.9e Net Flux = %.9e\n",I[k][j][i],I[k][j][i] +net_flux[k][j][i], net_flux[k][j][i]); 
+	  }
+#endif	
 	  //index =(j-num_ghost)*nx2_r + (i-num_ghost); 
 	  realI[index] = (float) I[k][j][i];
 	  /* Diagonal beam test only: check for nonphysical extrema on x and y edges of beam */
@@ -1166,12 +1184,12 @@ int main(int argc, char **argv){
 /* Compute J error from analytic solution */
 #ifdef ANALYTIC_SOLUTION
   double error_L1, error_L2, error_max; 
-  error_L1 =0.0; 
-  error_L2 =0.0; 
-  error_max =0.0;
-  temp =0.0;  
-  indexJ=0;
-  //only use points inside first spatial quadrant 
+  error_L1 = 0.0; 
+  error_L2 = 0.0; 
+  error_max = 0.0;
+  temp = 0.0;  
+  indexJ = 0;
+  //only use points inside first spatial quadrant-- not anymore! 
   for (j=0; j<nx2_r; j++){ //even though realJ is a flattened 3D structure, we can reference only the first z height
     for (i=0; i<nx1_r; i++){ 
       if (!(i+num_ghost == source_i && j+num_ghost == source_j)){
@@ -1285,19 +1303,6 @@ float sum(float a[], int n) {
   return(sum); 
 }
 
-/* a duplication of the function in ATHENA FullRT_flux.c */
-double flux_PLM(double ds,double *imu){
-  //the upwind slope
-  double delq1 = (imu[2] - imu[1])/ds;
-  double delq2 = (imu[1] - imu[0])/ds;
-  double dqi0;
-  if(delq1*delq2 >0.0) //minmod function
-    dqi0 = 2.0*delq1*delq2/(delq1+delq2);
-  else
-    dqi0 = 0.0;
-  //unknown why ds is in this function. might have to do with nonuniform grids
-  return(ds*dqi0); 
-}
 
 int uniform_angles2D(int N, double phi_z, double *pw, double **mu, double **mu_b, double *xa1,double *xa1_b){
 /* Generate uniform 2D discretization of mu */
@@ -1372,16 +1377,18 @@ double ***allocate_3D_contiguous(double *a, int n1, int n2, int n3){
   } 
   return(a_p);
 }
-
-float analytic_solution(double x,double y, double angle_c, double r_max){ //true radius, not cell centered r
-  //is there a way to do this without ray tracing?
-
-  //worry about the donut hole?
-
-  //nonlinear root finding
-
-			    
-  return(0.0);
+/* a near duplication of the function in ATHENA FullRT_flux.c */
+double flux_PLM(double ds,double *imu){
+  //the upwind slope
+  double delq1 = (imu[2] - imu[1])/ds;
+  double delq2 = (imu[1] - imu[0])/ds;
+  double dqi0;
+  if(delq1*delq2 >0.0) //minmod function
+    dqi0 = 2.0*delq1*delq2/(delq1+delq2);
+  else
+    dqi0 = 0.0;
+  //unknown why ds is in this function. might have to do with nonuniform grids
+  return(ds*dqi0); 
 }
 
 double flux_PLM_athena(double r[3], int dir, double dt, double ds, double vel, double imu[3])
