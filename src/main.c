@@ -33,12 +33,11 @@
 #define X2_PERIODIC 0
 #define AUTO_TIMESTEP 1 //flag for automatically setting dt such that max{cfl_array} = CFL
 #define CFL 0.8 //if set to 1.0, 1D constant advection along grid is exact. 
-#define OUTPUT_INTERVAL 1 //choose timestep interval to dump simulation data to rte-n.vtk. 0 for only last step, 1 for every step
+#define OUTPUT_INTERVAL 0 //choose timestep interval to dump simulation data to rte-n.vtk. 0 for only last step, 1 for every step
 #undef SECOND_ORDER //flag to turn on van Leer flux limiting
 #define ANALYTIC_SOLUTION //in addition to timestepping, output steady state solution in analytic-rte.vtk
 
-
-#define V_EXACT //ifdef, then exact integral over boundary velocity is computed. Else, midpoint approximation is used
+#undef V_EXACT //ifdef, then exact integral over boundary velocity is computed. Else, midpoint approximation is used
 #undef DEBUG //define to probe a cell's relevant values at indices assigned below
 #define TEST5
 #undef SOLID_ANGLE //only works with first order. recompute the edge waves based on integral average of positive solid angle 
@@ -82,7 +81,7 @@ int main(int argc, char **argv){
   int index=0; 
   int indexJ=0;   /* for computing zeroth angular moment of the radiation field*/
   int next, next2, prev, prev2; //for indexing third/angular dimension since ghost cells are not used in that dimension
-  int nsteps = 50;
+  int nsteps = 1000;
   double dt = 0.02; //initial timestep. Auto adjusted #ifdef AUTO_TIMESTEP
 
   /*----------------------------------------*/
@@ -90,8 +89,8 @@ int main(int argc, char **argv){
   /*----------------------------------------*/
   printf("Initializing mesh.....\n");
   /* Computational (2D polar) grid coordinates */
-  int nx1 = 128;
-  int nx2 = 128; 
+  int nx1 = 256;
+  int nx2 = 256; 
 
   /* Angular parameter */
   int xa1_uniform = 1; //boolean for switching between uniform discretization and Bruls discretization
@@ -99,7 +98,7 @@ int main(int argc, char **argv){
   int nxa1;
   double *dxa1;  //angular width of cell 
   if (xa1_uniform){
-    nxa1 = 4; 
+    nxa1 = 196; 
   } 
   else {
     N_bruls = 4;
@@ -111,7 +110,11 @@ int main(int argc, char **argv){
 
   //TEST5 parameters: these are the active angular bins (inclusive) that point source emits radiation
   int source_k_start = 0;
-  int source_k_end = 3;
+  int source_k_end = 195;
+  if (source_k_end >= nxa1){
+    printf("TEST5 error: range of active solid angle cells greater than resolution! \n");
+    exit(1);
+  }
 
   /* DEBUG parameters: set these to select a cell and timestep at which to print out fluxes and limited slopes, etc */
 #ifdef DEBUG
